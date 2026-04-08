@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>插件配置</title>
+  <style>
+    body { padding: 20px; font-family: sans-serif; width: 400px; }
+    .field { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+    input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    #status { margin-top: 10px; color: #28a745; font-size: 14px; min-height: 20px; }
+    .hint { font-size: 12px; color: #666; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h2>Dify API 配置</h2>
+  
+  <div class="field">
+    <label>聊天接口 URL</label>
+    <input type="text" id="api-url" placeholder="例如: http://127.0.0.1/v1/chat-messages">
+  </div>
+  
+  <div class="field">
+    <label>上传接口 URL</label>
+    <input type="text" id="upload-url" placeholder="例如: http://127.0.0.1/v1/files/upload">
+  </div>
+  
+  <div class="field">
+    <label>API Key</label>
+    <input type="password" id="api-key" placeholder="app-xxxxxx">
+    <div class="hint">请确保不要将 Key 泄露给他人。</div>
+  </div>
+  
+  <button id="save-btn">保存配置</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>
