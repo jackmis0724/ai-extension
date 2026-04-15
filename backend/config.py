@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     # 默认模型
     default_model: str = "openai"
 
+    # 认证配置
+    secret_key: str = "change-me-in-production"
+
+    # 速率限制（每分钟请求数）
+    rate_limit_per_minute: int = 60
+
     # CORS 配置
     allowed_origins: str = "chrome-extension://*,moz-extension://*"
 

@@ -1,25 +1,28 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 import json
 import uuid
 
 from models.schemas import ChatRequest
 from chains.chat_chain import stream_chat
-
+from auth import verify_api_key
 
 router = APIRouter()
-
 
 # 内存中存储对话历史（生产环境应该使用数据库）
 conversation_histories: Dict[str, List] = {}
 
 
 @router.post("/chat/stream")
-async def stream_chat_endpoint(request: ChatRequest):
+async def stream_chat_endpoint(
+    request: ChatRequest,
+    auth: dict = Depends(verify_api_key),
+):
     """流式聊天端点
 
     通过 SSE (Server-Sent Events) 返回流式响应
+    需要 X-API-Key 认证
     """
 
     async def generate():
@@ -99,18 +102,21 @@ async def stream_chat_endpoint(request: ChatRequest):
 
 
 @router.post("/chat/clear/{conversation_id}")
-async def clear_conversation(conversation_id: str):
+async def clear_conversation(
+    conversation_id: str,
+    auth: dict = Depends(verify_api_key),
+):
     """清除对话历史"""
-
     if conversation_id in conversation_histories:
         del conversation_histories[conversation_id]
-
     return {"message": "对话历史已清除", "conversation_id": conversation_id}
 
 
 @router.get("/chat/history/{conversation_id}")
-async def get_conversation_history(conversation_id: str):
+async def get_conversation_history(
+    conversation_id: str,
+    auth: dict = Depends(verify_api_key),
+):
     """获取对话历史"""
-
     history = conversation_histories.get(conversation_id, [])
     return {"conversation_id": conversation_id, "history": history}

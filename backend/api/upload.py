@@ -1,10 +1,11 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from typing import Optional
 import uuid
 import os
 from pathlib import Path
 
 from models.schemas import UploadResponse
+from auth import verify_api_key
 
 
 router = APIRouter()
@@ -15,10 +16,14 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    auth: dict = Depends(verify_api_key),
+):
     """上传文件端点
 
     支持上传图片文件，返回文件 ID 用于后续分析
+    需要 X-API-Key 认证
     """
 
     try:
@@ -56,7 +61,10 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @router.get("/upload/{file_id}")
-async def get_file(file_id: str):
+async def get_file(
+    file_id: str,
+    auth: dict = Depends(verify_api_key),
+):
     """获取上传的文件
 
     返回文件的二进制数据

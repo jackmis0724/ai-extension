@@ -1,13 +1,15 @@
 // ====== 配置区 ======
 let BACKEND_URL = '';
 let AI_MODEL = '';
+let API_KEY = '';
 
 // 获取最新配置
 async function updateConfig() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(['backendUrl', 'aiModel'], (res) => {
-      BACKEND_URL = res.backendUrl || 'http://localhost:8000';
+    chrome.storage.local.get(['backendUrl', 'aiModel', 'apiKey'], (res) => {
+      BACKEND_URL = res.backendUrl || 'https://8.156.94.232.nip.io:8000';
       AI_MODEL = res.aiModel || 'openai';
+      API_KEY = res.apiKey || '';
       resolve();
     });
   });
@@ -163,6 +165,7 @@ async function uploadImage(dataUrl) {
   // 上传到后端
   const response = await fetch(`${BACKEND_URL}/api/upload`, {
     method: 'POST',
+    headers: { 'X-API-Key': API_KEY },
     body: formData
   });
 
@@ -178,6 +181,11 @@ async function sendMessage() {
   await updateConfig();
   if (!BACKEND_URL) {
     appendMessage('System', '⚠️ 请先配置后端服务地址。');
+    chrome.runtime.openOptionsPage();
+    return;
+  }
+  if (!API_KEY) {
+    appendMessage('System', '⚠️ 请先配置 API Key。');
     chrome.runtime.openOptionsPage();
     return;
   }
@@ -245,11 +253,19 @@ async function sendMessage() {
 
 const response = await fetch(`${BACKEND_URL}/api/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': API_KEY
+      },
       body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('API Key无效，请在设置中检查');
+      } else if (response.status === 429) {
+        throw new Error('请求过于频繁，请稍后再试');
+      }
       throw new Error(`服务器错误: ${response.status}`);
     }
 
