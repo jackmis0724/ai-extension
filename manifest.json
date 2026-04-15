@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "AI网页助手",
-  "version": "1.0",
+  "version": "2.0.0",
+  "description": "基于 LangChain 的 AI 网页助手，支持页面内容分析和图片识别",
   "permissions": [
     "sidePanel",
-    "tabs", 
+    "tabs",
     "scripting",
     "activeTab",
     "storage"

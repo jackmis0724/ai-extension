@@ -1,15 +1,13 @@
 // ====== 配置区 ======
-let DIFY_API_URL = '';
-let DIFY_UPLOAD_URL = '';
-let DIFY_API_KEY = '';
+let BACKEND_URL = '';
+let AI_MODEL = '';
 
 // 获取最新配置
 async function updateConfig() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(['difyApiUrl', 'difyUploadUrl', 'difyApiKey'], (res) => {
-      DIFY_API_URL = res.difyApiUrl || 'http://127.0.0.1/v1/chat-messages';
-      DIFY_UPLOAD_URL = res.difyUploadUrl || 'http://127.0.0.1/v1/files/upload';
-      DIFY_API_KEY = res.difyApiKey || '';
+    chrome.storage.local.get(['backendUrl', 'aiModel'], (res) => {
+      BACKEND_URL = res.backendUrl || 'http://localhost:8000';
+      AI_MODEL = res.aiModel || 'openai';
       resolve();
     });
   });
@@ -80,15 +78,35 @@ function appendMessage(sender, text, imageDataUrl = null) {
 function scrollToBottom() { chatBox.scrollTop = chatBox.scrollHeight; }
 function saveHistory() { chrome.storage.session.set({ chatHistory: chatBox.innerHTML }); }
 
+// --- 检查模型是否支持视觉 ---
+function isVisionModel(model) {
+  // OpenAI GPT-4o-mini 和 Claude 支持视觉，DeepSeek 不支持
+  return model === 'openai' || model === 'claude';
+}
+
 // --- 截图逻辑 ---
 screenshotBtn.addEventListener('click', async () => {
+  // 检查当前模型是否支持视觉
+  if (!isVisionModel(AI_MODEL)) {
+    appendMessage('System', `⚠️ 当前使用的模型（${AI_MODEL}）不支持图片识别功能。\n\n建议：\n• 切换到 OpenAI 或 Claude 模型以使用图片分析\n• 当前模型仅支持文本对话\n\n你可以在设置中切换模型。`);
+    return;
+  }
+
   try {
     const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 });
     setPreview(dataUrl);
-  } catch (error) { appendMessage("System", "截图失败。"); }
+  } catch (error) {
+    appendMessage("System", "截图失败。");
+  }
 });
 
 cropBtn.addEventListener('click', async () => {
+  // 检查当前模型是否支持视觉
+  if (!isVisionModel(AI_MODEL)) {
+    appendMessage('System', `⚠️ 当前使用的模型（${AI_MODEL}）不支持图片识别功能。\n\n建议：\n• 切换到 OpenAI 或 Claude 模型以使用图片分析\n• 当前模型仅支持文本对话\n\n你可以在设置中切换模型。`);
+    return;
+  }
+
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['inject_crop.js'] });
@@ -132,27 +150,34 @@ async function cropImageData(fullDataUrl, rect) {
 }
 
 // --- 发送逻辑 ---
-async function uploadImageToDify(dataUrl) {
+async function uploadImage(dataUrl) {
+  // 将 dataURL 转换为 Blob
   let arr = dataUrl.split(','), mime = arr[0].match(/:(.*?);/)[1], bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
   while(n--) { u8arr[n] = bstr.charCodeAt(n); }
-  const file = new File([u8arr], 'screenshot.jpg', {type:mime});
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('user', 'arch-extension-user');
+  const blob = new Blob([u8arr], {type:mime});
 
-  const response = await fetch(DIFY_UPLOAD_URL, {
+  // 创建 FormData
+  const formData = new FormData();
+  formData.append('file', new File([blob], 'screenshot.jpg', {type:mime}));
+
+  // 上传到后端
+  const response = await fetch(`${BACKEND_URL}/api/upload`, {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + DIFY_API_KEY },
     body: formData
   });
+
+  if (!response.ok) {
+    throw new Error('图片上传失败');
+  }
+
   const data = await response.json();
-  return data.id;
+  return data.file_id;
 }
 
 async function sendMessage() {
   await updateConfig();
-  if (!DIFY_API_KEY) {
-    appendMessage('System', '⚠️ 请先配置 API Key。');
+  if (!BACKEND_URL) {
+    appendMessage('System', '⚠️ 请先配置后端服务地址。');
     chrome.runtime.openOptionsPage();
     return;
   }
@@ -163,7 +188,7 @@ async function sendMessage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   appendMessage('User', text, currentScreenshot);
   const imageToUpload = currentScreenshot;
-  
+
   userInput.value = '';
   sendBtn.disabled = true;
   currentScreenshot = null;
@@ -171,12 +196,12 @@ async function sendMessage() {
 
   const aiMsgDiv = document.createElement('div');
   aiMsgDiv.className = 'message ai-msg';
-  
+
   const thoughtWrapper = document.createElement('div');
   thoughtWrapper.className = 'thought-wrapper';
-  thoughtWrapper.style.display = 'none'; 
+  thoughtWrapper.style.display = 'none';
   thoughtWrapper.innerHTML = `<div class="thought-header">思考过程</div><div class="thought-content markdown-body"></div>`;
-  
+
   const aiTextNode = document.createElement('div');
   aiTextNode.className = 'markdown-body';
   aiTextNode.innerText = '正在思考...';
@@ -198,89 +223,82 @@ async function sendMessage() {
     let { conversationId, savedUrl } = await chrome.storage.session.get(['conversationId', 'savedUrl']);
     if (savedUrl !== tab.url) { conversationId = ""; }
 
-    const payload = {
-      inputs: { page_content: activeContent, url: tab.url, title: tab.title },
-      query: text || "请查看图片",
-      response_mode: "streaming",
-      conversation_id: conversationId || "",
-      user: "arch-extension-user",
-      files: []
-    };
-
+    // 上传图片（如果有）
+    let fileId = null;
     if (imageToUpload) {
-      const fileId = await uploadImageToDify(imageToUpload);
-      payload.files.push({ type: "image", transfer_method: "local_file", upload_file_id: fileId });
+      fileId = await uploadImage(imageToUpload);
     }
 
-    const response = await fetch(DIFY_API_URL, {
+    // 构建请求
+    const payload = {
+      query: text || "请查看图片",
+      page_content: activeContent,
+      url: tab.url,
+      title: tab.title,
+      model: AI_MODEL,
+      conversation_id: conversationId || ""
+    };
+
+    if (fileId) {
+      payload.image_file_id = fileId;
+    }
+
+const response = await fetch(`${BACKEND_URL}/api/chat/stream`, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + DIFY_API_KEY, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
+    if (!response.ok) {
+      throw new Error(`服务器错误: ${response.status}`);
+    }
+
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
-    let buffer = ""; 
-    let fullRawAnswer = ""; // 核心：用于解析标签的累计文本
-    
-    aiTextNode.innerText = ""; 
+    let buffer = "";
+    let fullAnswer = "";
+
+    aiTextNode.innerText = "";
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      
+
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop(); 
+      buffer = lines.pop();
 
       for (const line of lines) {
         if (!line.trim() || !line.startsWith('data:')) continue;
         try {
           const data = JSON.parse(line.substring(5));
-          
-          // 1. 处理显式的 thought 事件 (Dify 标准)
+
+          // 处理消息内容
+          if (data.event === 'message' && data.content) {
+            fullAnswer += data.content;
+            aiTextNode.innerHTML = marked.parse(fullAnswer);
+            scrollToBottom();
+          }
+
+          // 处理思考过程（如果后端支持）
           if (data.event === 'thought') {
             thoughtWrapper.style.display = 'block';
-            const currentThought = thoughtWrapper.querySelector('.thought-content').innerHTML;
-            thoughtWrapper.querySelector('.thought-content').innerHTML = marked.parse((data.thought_accumulated || data.thought));
+            thoughtWrapper.querySelector('.thought-content').innerHTML = marked.parse(data.content || '');
             scrollToBottom();
-          } 
-          
-          // 2. 处理包含在 answer 里的 <think> 标签 (你的情况)
-          else if (data.event === 'message') {
-            fullRawAnswer += (data.answer || "");
+          }
 
-            if (fullRawAnswer.includes('<think>')) {
-              thoughtWrapper.style.display = 'block';
-              
-              const parts = fullRawAnswer.split('</think>');
-              if (parts.length > 1) {
-                // 思考已结束
-                const thoughtText = parts[0].replace('<think>', '');
-                const finalAnswer = parts[1];
-                
-                thoughtWrapper.querySelector('.thought-content').innerHTML = marked.parse(thoughtText);
-                aiTextNode.innerHTML = marked.parse(finalAnswer);
-                
-                // 首次检测到结束时自动折叠
-                if (!thoughtWrapper.classList.contains('collapsed') && finalAnswer.length > 0) {
-                   thoughtWrapper.classList.add('collapsed');
-                }
-              } else {
-                // 正在思考中
-                const thoughtInProgress = fullRawAnswer.replace('<think>', '');
-                thoughtWrapper.querySelector('.thought-content').innerHTML = marked.parse(thoughtInProgress);
-              }
-            } else {
-              // 普通消息
-              aiTextNode.innerHTML = marked.parse(fullRawAnswer);
-            }
-            scrollToBottom();
-          } 
-          else if (data.event === 'message_end') {
+          // 处理错误
+          if (data.event === 'error') {
+            throw new Error(data.error || '未知错误');
+          }
+
+          // 消息结束
+          if (data.event === 'message_end') {
             chrome.storage.session.set({ conversationId: data.conversation_id, savedUrl: tab.url });
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error('解析 SSE 数据出错:', e, line);
+        }
       }
     }
   } catch (error) {

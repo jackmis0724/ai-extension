@@ -7,32 +7,40 @@
     body { padding: 20px; font-family: sans-serif; width: 400px; }
     .field { margin-bottom: 15px; }
     label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
-    input { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+    input, select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
     button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
     button:hover { background: #0056b3; }
     #status { margin-top: 10px; color: #28a745; font-size: 14px; min-height: 20px; }
     .hint { font-size: 12px; color: #666; margin-top: 4px; }
+    .info-box { background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 10px; margin-bottom: 15px; font-size: 13px; }
   </style>
 </head>
 <body>
-  <h2>Dify API 配置</h2>
-  
-  <div class="field">
-    <label>聊天接口 URL</label>
-    <input type="text" id="api-url" placeholder="例如: http://127.0.0.1/v1/chat-messages">
+  <h2>AI 网页助手配置</h2>
+
+  <div class="info-box">
+    请先启动后端服务，然后配置连接信息。
   </div>
-  
+
   <div class="field">
-    <label>上传接口 URL</label>
-    <input type="text" id="upload-url" placeholder="例如: http://127.0.0.1/v1/files/upload">
+    <label>后端服务地址</label>
+    <input type="text" id="backend-url" placeholder="例如: http://localhost:8000">
+    <div class="hint">后端服务的完整地址，不要包含末尾斜杠</div>
   </div>
-  
+
   <div class="field">
-    <label>API Key</label>
-    <input type="password" id="api-key" placeholder="app-xxxxxx">
-    <div class="hint">请确保不要将 Key 泄露给他人。</div>
+    <label>AI 模型</label>
+    <select id="ai-model">
+      <option value="openai">OpenAI (GPT-4o-mini) - 支持图片分析 ✅</option>
+      <option value="deepseek">DeepSeek (DeepSeek-Chat) - 纯文本模型 ❌</option>
+      <option value="claude">Claude (Claude 3.5 Sonnet) - 支持图片分析 ✅</option>
+    </select>
+    <div class="hint">
+      OpenAI 和 Claude 支持图片识别，DeepSeek 仅支持文本对话。<br>
+      需要在后端配置对应的 API Key
+    </div>
   </div>
-  
+
   <button id="save-btn">保存配置</button>
   <div id="status"></div>
 
