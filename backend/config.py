@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # 速率限制（每分钟请求数）
     rate_limit_per_minute: int = 60
 
+    # 上传文件限制（字节，默认10MB）
+    max_upload_size: int = 10 * 1024 * 1024
+
+    # 上传文件过期时间（小时，默认24小时）
+    upload_expiry_hours: int = 24
+
     # CORS 配置
     allowed_origins: str = "chrome-extension://*,moz-extension://*"
 

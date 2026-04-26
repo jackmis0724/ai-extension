@@ -2,17 +2,30 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from typing import Optional
 import uuid
 import os
+import time
 from pathlib import Path
 
 from models.schemas import UploadResponse
 from auth import verify_api_key
-
+from config import settings
 
 router = APIRouter()
 
 # 上传文件存储目录
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+async def cleanup_expired_uploads():
+    """清理过期的上传文件"""
+    expiry_seconds = settings.upload_expiry_hours * 3600
+    now = time.time()
+    cleaned = 0
+    for f in UPLOAD_DIR.iterdir():
+        if f.is_file() and (now - f.stat().st_mtime) > expiry_seconds:
+            f.unlink()
+            cleaned += 1
+    return cleaned
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -33,6 +46,17 @@ async def upload_file(
                 status_code=400, detail="只支持上传图片文件"
             )
 
+        # 读取文件内容
+        content = await file.read()
+
+        # 验证文件大小
+        if len(content) > settings.max_upload_size:
+            max_mb = settings.max_upload_size / (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"文件大小超过限制（最大 {max_mb:.0f}MB）",
+            )
+
         # 生成文件 ID
         file_id = str(uuid.uuid4())
 
@@ -40,10 +64,14 @@ async def upload_file(
         file_extension = Path(file.filename).suffix or ".jpg"
         file_path = UPLOAD_DIR / f"{file_id}{file_extension}"
 
-        # 写入文件
         with open(file_path, "wb") as f:
-            content = await file.read()
             f.write(content)
+
+        # 顺便清理过期文件（非阻塞，失败不影响上传）
+        try:
+            await cleanup_expired_uploads()
+        except Exception:
+            pass
 
         return UploadResponse(
             file_id=file_id,

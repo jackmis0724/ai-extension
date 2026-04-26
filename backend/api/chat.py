@@ -3,6 +3,8 @@ from fastapi.responses import StreamingResponse
 from typing import Optional, List, Dict
 import json
 import uuid
+import aiosqlite
+from pathlib import Path
 
 from models.schemas import ChatRequest
 from chains.chat_chain import stream_chat
@@ -10,8 +12,56 @@ from auth import verify_api_key
 
 router = APIRouter()
 
-# 内存中存储对话历史（生产环境应该使用数据库）
-conversation_histories: Dict[str, List] = {}
+# 对话历史持久化 — SQLite
+DB_PATH = Path(__file__).parent.parent / "conversations.db"
+MAX_HISTORY_LEN = 20  # 最大历史消息数（每条含role+content）
+
+
+async def _get_db() -> aiosqlite.Connection:
+    """获取数据库连接"""
+    db = await aiosqlite.connect(DB_PATH)
+    await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            conversation_id TEXT PRIMARY KEY,
+            history TEXT NOT NULL DEFAULT '[]',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.commit()
+    return db
+
+
+async def _load_history(conversation_id: str) -> List[Dict]:
+    """从数据库加载对话历史"""
+    db = await _get_db()
+    try:
+        async with db.execute(
+            "SELECT history FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return json.loads(row[0]) if row else []
+    finally:
+        await db.close()
+
+
+async def _save_history(conversation_id: str, history: List[Dict]):
+    """保存对话历史到数据库"""
+    db = await _get_db()
+    try:
+        history_json = json.dumps(history, ensure_ascii=False)
+        await db.execute(
+            """INSERT INTO conversations (conversation_id, history, updated_at)
+               VALUES (?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(conversation_id) DO UPDATE SET
+                 history = excluded.history,
+                 updated_at = CURRENT_TIMESTAMP""",
+            (conversation_id, history_json),
+        )
+        await db.commit()
+    finally:
+        await db.close()
 
 
 @router.post("/chat/stream")
@@ -30,8 +80,8 @@ async def stream_chat_endpoint(
             # 获取或创建对话 ID
             conversation_id = request.conversation_id or str(uuid.uuid4())
 
-            # 获取对话历史
-            history = conversation_histories.get(conversation_id, [])
+            # 从数据库加载对话历史
+            history = await _load_history(conversation_id)
 
             # 流式生成响应
             full_response = ""
@@ -53,22 +103,23 @@ async def stream_chat_endpoint(
                 }
                 yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-            # 更新对话历史
-            if conversation_id not in conversation_histories:
-                conversation_histories[conversation_id] = []
-
-            conversation_histories[conversation_id].append(
-                {"role": "user", "content": request.query}
-            )
-            conversation_histories[conversation_id].append(
-                {"role": "assistant", "content": full_response}
-            )
+            # 更新对话历史 — 同时保存 query 和 page_content
+            history.append({
+                "role": "user",
+                "content": request.query,
+                "page_content": request.page_content[:10000] if request.page_content else "",
+            })
+            history.append({
+                "role": "assistant",
+                "content": full_response,
+            })
 
             # 限制历史长度
-            if len(conversation_histories[conversation_id]) > 20:
-                conversation_histories[conversation_id] = conversation_histories[
-                    conversation_id
-                ][-20:]
+            if len(history) > MAX_HISTORY_LEN:
+                history = history[-MAX_HISTORY_LEN:]
+
+            # 持久化到数据库
+            await _save_history(conversation_id, history)
 
             # 发送结束事件
             end_data = {
@@ -107,8 +158,15 @@ async def clear_conversation(
     auth: dict = Depends(verify_api_key),
 ):
     """清除对话历史"""
-    if conversation_id in conversation_histories:
-        del conversation_histories[conversation_id]
+    db = await _get_db()
+    try:
+        await db.execute(
+            "DELETE FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
     return {"message": "对话历史已清除", "conversation_id": conversation_id}
 
 
@@ -118,5 +176,5 @@ async def get_conversation_history(
     auth: dict = Depends(verify_api_key),
 ):
     """获取对话历史"""
-    history = conversation_histories.get(conversation_id, [])
+    history = await _load_history(conversation_id)
     return {"conversation_id": conversation_id, "history": history}
